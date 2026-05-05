@@ -61,6 +61,16 @@ def check_symmetry(N, w_by_k):
                 f"Design not symmetric: w_{k}={wk} but w_{N-k}={wk2}")
 
 
+def is_symmetric_design(N, w_by_k, tol=1e-12):
+    keys = set(w_by_k.keys()) | {N - k for k in w_by_k.keys()}
+    for k in keys:
+        wk = w_by_k.get(k, 0.0)
+        wk2 = w_by_k.get(N - k, 0.0)
+        if abs(wk - wk2) > tol:
+            return False
+    return True
+
+
 def uniform_weights(N, m):
     if m < 1 or m > N - 1:
         raise ValueError("m must be in 1..N-1")
@@ -203,8 +213,8 @@ def solve_minimax(N, w_by_k, lower=0.0, upper=1.0, skewed_only=True,
     w_by_k = normalize_weights(N, w_by_k)
     sizes = get_sizes(N, w_by_k)
 
-    if odd:
-        check_symmetry(N, w_by_k)
+    design_is_symmetric = is_symmetric_design(N, w_by_k)
+    use_equivariance = odd and design_is_symmetric
 
     sigs = skewed_signatures(N) if skewed_only else all_signatures(N)
 
@@ -228,7 +238,7 @@ def solve_minimax(N, w_by_k, lower=0.0, upper=1.0, skewed_only=True,
     if enforce_box:
         constraints += [d >= -1, d <= 1]
 
-    if odd:
+    if use_equivariance:
         seen = set()
         for j, (nt, st, sc) in enumerate(grid):
             if j in seen:
@@ -275,7 +285,9 @@ def solve_minimax(N, w_by_k, lower=0.0, upper=1.0, skewed_only=True,
     out = {
         "N": N,
         "w_by_k": w_by_k,
-        "odd": odd,
+        "requested_equivariance": odd,
+        "design_is_symmetric": design_is_symmetric,
+        "used_equivariance": use_equivariance,
         "skewed_only": skewed_only,
         "grid": grid,
         "grid_index": grid_index,
@@ -320,8 +332,13 @@ def main():
 
     ap.add_argument("--all_states", action="store_true",
                     help="use all signatures (not just skewed)")
-    ap.add_argument("--no_equivariance", action="store_true",
-                    help="disable equivariance (sign-flip) constraint")
+    ap.add_argument(
+        "--no_equivariance",
+        action="store_true",
+        help=("disable equivariance (sign-flip) constraint. "
+              "By default, equivariance is used automatically only when the design "
+              "satisfies w_k = w_{N-k}.")
+    )
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--verify_all", action="store_true",
                     help="verify worst-case risk over all signatures")
@@ -370,8 +387,11 @@ def main():
             print(row)
         print()
 
-    if out["odd"]:
+    if out.get("used_equivariance", False):
         print("(equivariant: delta(nt,st,sc) = -delta(nc,sc,st))")
+        print()
+    elif out.get("requested_equivariance", False) and not out.get("design_is_symmetric", True):
+        print("(equivariance requested but not used because design is not symmetric)")
         print()
 
     print(f"worst-case risk: {out['worst_risk_orig']:.6g}")
